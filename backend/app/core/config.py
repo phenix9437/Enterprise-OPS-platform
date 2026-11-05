@@ -31,6 +31,32 @@ class Settings(BaseSettings):
     planner_max_steps: int = 12
     chat_history_messages: int = 10        # how many past messages the planner sees
 
+    # --- Tool layer / MCP (Phase 3) ---
+    tools_enabled: bool = True             # start the MCP tool servers with the API
+    tool_call_timeout_seconds: float = 30.0
+    tool_max_retries: int = 2              # only for read-only / idempotent tools
+    tool_retry_backoff_seconds: float = 0.3
+    tools_disabled: str = ""               # comma-separated registry names, e.g. "gmail.send_email"
+
+    # --- Agent execution (Phase 4) ---
+    step_max_attempts: int = 2             # tries per plan step (1 initial + retries with feedback)
+    executor_max_calls_per_step: int = 10  # fan-out cap, e.g. one call per customer
+    context_chars_per_item: int = 8000     # how much of each earlier step's output the LLM sees
+    checkpoint_database_url: str = ""      # defaults to DATABASE_URL (PostgreSQL -> durable checkpoints)
+
+    # --- Approvals (Phase 5) ---
+    approval_default_expiry_minutes: int = 1440   # unanswered requests expire after this long
+    approval_allow_self_approval: bool = False    # True only for solo development (one person = requester AND approver)
+    approval_sweep_seconds: int = 60              # how often to look for expired requests
+
+    # business data served by the business_db MCP server (defaults to the app DB for the demo)
+    business_database_url: str = ""
+    seed_demo_data: bool = True
+    gmail_backend: str = "mock"            # mock | google
+    drive_backend: str = "mock"            # mock | google
+    google_credentials_file: str = ""      # authorized-user JSON for the google backends
+    gmail_allowed_recipient_domains: str = ""  # comma-separated; empty = any domain
+
     @model_validator(mode="after")
     def _block_insecure_secret_in_prod(self) -> "Settings":
         if self.environment == "production" and self.jwt_secret == _INSECURE_DEFAULT_SECRET:

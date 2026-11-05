@@ -66,7 +66,9 @@ async def chat(
 
     # 3. Ask the LLM for a plan (with validation + one repair attempt)
     try:
-        outcome = await create_plan(llm, body.message, history)
+        gateway = getattr(request.app.state, "tool_gateway", None)
+        catalog = gateway.catalog_for(user.role) if gateway else None
+        outcome = await create_plan(llm, body.message, history, capability_catalog=catalog)
     except PlanningFailed as exc:
         task.status = TaskStatus.FAILED.value
         task.error = str(exc)

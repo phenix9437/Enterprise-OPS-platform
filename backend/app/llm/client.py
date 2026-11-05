@@ -70,6 +70,13 @@ class OpenAIClient:
         )
 
 
+class UnavailableLLM:
+    """Placeholder when no API key is set: lets approval expiry/recovery run without an LLM."""
+
+    async def parse(self, messages, response_model):
+        raise LLMError("LLM is not configured (OPENAI_API_KEY missing)")
+
+
 _client: OpenAIClient | None = None
 
 

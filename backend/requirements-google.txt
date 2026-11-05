@@ -1,0 +1,3 @@
+# Only needed when GMAIL_BACKEND=google or DRIVE_BACKEND=google
+google-api-python-client>=2.120
+google-auth>=2.29

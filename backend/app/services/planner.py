@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 from app.core.config import get_settings
 from app.llm.client import LLMClient, LLMError, LLMUsage
-from app.llm.prompts import PLANNER_SYSTEM_PROMPT, REPAIR_PROMPT
+from app.llm.prompts import FALLBACK_CAPABILITY_CATALOG, PLANNER_SYSTEM_PROMPT, REPAIR_PROMPT
 from app.schemas.plan import Plan
 from app.services.plan_validation import PlanValidationError, validate_and_normalize
 
@@ -32,10 +32,13 @@ class PlanningFailed(Exception):
         self.usages = usages
 
 
-async def create_plan(llm: LLMClient, instruction: str, history: list[dict]) -> PlanningOutcome:
+async def create_plan(
+    llm: LLMClient, instruction: str, history: list[dict], capability_catalog: str | None = None
+) -> PlanningOutcome:
     s = get_settings()
     messages: list[dict] = [
-        {"role": "system", "content": PLANNER_SYSTEM_PROMPT.format(max_steps=s.planner_max_steps)},
+        {"role": "system", "content": PLANNER_SYSTEM_PROMPT.format(
+            capabilities=capability_catalog or FALLBACK_CAPABILITY_CATALOG, max_steps=s.planner_max_steps)},
         *history,
         {"role": "user", "content": instruction},
     ]

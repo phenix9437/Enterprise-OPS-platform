@@ -13,8 +13,13 @@ class TaskStatus(str, enum.Enum):
     PLANNING = "planning"
     NEEDS_CLARIFICATION = "needs_clarification"
     PLANNED = "planned"
+    RUNNING = "running"
+    AWAITING_APPROVAL = "awaiting_approval"
+    COMPLETED = "completed"
     FAILED = "failed"
-    # Later phases add: running, awaiting_approval, completed, cancelled
+    REJECTED = "rejected"                # a human rejected a step
+    EXPIRED = "expired"                  # nobody answered the approval request in time
+    NEEDS_ATTENTION = "needs_attention"  # a write's outcome is unknown; a human must check
 
 
 class Conversation(Base):
@@ -54,5 +59,26 @@ class Task(Base):
     prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
     completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
     llm_latency_ms: Mapped[float] = mapped_column(default=0.0)
+    # --- execution (Phase 4) ---
+    current_step: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    result: Mapped[str | None] = mapped_column(Text, nullable=True)           # final summary for the user
+    pending_approval: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class TaskEvent(Base):
+    """Timeline of what happened while a task ran. Drives progress display and analytics."""
+
+    __tablename__ = "task_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    task_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("tasks.id"), index=True)
+    seq: Mapped[int] = mapped_column(Integer)
+    type: Mapped[str] = mapped_column(String(40), index=True)
+    step_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    message: Mapped[str] = mapped_column(Text)
+    data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

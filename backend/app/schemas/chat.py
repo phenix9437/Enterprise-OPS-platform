@@ -33,7 +33,28 @@ class TaskRead(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     llm_latency_ms: float
+    current_step: int | None
+    result: str | None
+    pending_approval: dict | None
+    started_at: datetime | None
+    finished_at: datetime | None
     created_at: datetime
+
+
+class TaskEventRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    seq: int
+    type: str
+    step_id: int | None
+    message: str
+    data: dict | None
+    created_at: datetime
+
+
+class ExecutionAccepted(BaseModel):
+    task_id: uuid.UUID
+    status: str
 
 
 class ChatResponse(BaseModel):

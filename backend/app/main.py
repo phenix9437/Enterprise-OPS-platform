@@ -7,7 +7,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from fastapi import FastAPI, Request
 
 import app.models  # noqa: F401  (registers tables on Base.metadata)
-from app.api.routes import approvals, auth, chat, execution, health, tools, users
+from app.api.routes import approvals, auth, chat, execution, health, schedules, tools, users, workflows
 from app.core.config import get_settings
 from app.core.logging import setup_logging
 from app.db.base import Base
@@ -30,33 +30,38 @@ def create_app(init_db: bool = True, init_tools: bool = True) -> FastAPI:
                 async with engine.begin() as conn:
                     await conn.run_sync(Base.metadata.create_all)
             if init_tools and settings.tools_enabled:
-                from app.agents.checkpointer import open_checkpointer
-                from app.agents.runner import TaskRunner
+                from app.llm.client import UnavailableLLM, get_llm_client
                 from app.tools.bootstrap import build_gateway, start_builtin_servers
 
                 gateway = build_gateway(settings)
-                await start_builtin_servers(gateway)
+                await start_builtin_servers(gateway, settings)
                 app.state.tool_gateway = gateway
-                checkpointer = await stack.enter_async_context(open_checkpointer(settings))
-                runner = TaskRunner(app.state.session_factory, gateway, checkpointer, settings)
-                app.state.task_runner = runner
-                from app.llm.client import UnavailableLLM, get_llm_client
+                if settings.celery_enabled:
+                    # Tasks run in Celery workers; beat does the housekeeping. The API only enqueues.
+                    from app.worker.queue_runner import QueueRunner
 
-                llm = get_llm_client() if settings.openai_api_key else UnavailableLLM()
-                if settings.openai_api_key:  # continue tasks that were running when we last stopped
-                    n = await runner.recover_interrupted(llm)
-                    if n:
-                        log.info("recovering %d interrupted task(s)", n)
+                    runner = QueueRunner(app.state.session_factory, gateway, settings)
+                    app.state.task_runner = runner
+                else:
+                    from app.agents.checkpointer import open_checkpointer
+                    from app.agents.runner import TaskRunner
+                    from app.services.maintenance import run_maintenance
 
-                async def sweep_expired_approvals():
-                    while True:
-                        await asyncio.sleep(settings.approval_sweep_seconds)
-                        try:
-                            await runner.expire_overdue_approvals(llm)
-                        except Exception:
-                            log.exception("approval expiry sweep failed")
+                    checkpointer = await stack.enter_async_context(open_checkpointer(settings))
+                    runner = TaskRunner(app.state.session_factory, gateway, checkpointer, settings)
+                    app.state.task_runner = runner
+                    llm = get_llm_client() if settings.openai_api_key else UnavailableLLM()
+                    if settings.openai_api_key:  # continue tasks that were running when we last stopped
+                        n = await runner.recover_interrupted(llm)
+                        if n:
+                            log.info("recovering %d interrupted task(s)", n)
 
-                sweeper = asyncio.create_task(sweep_expired_approvals(), name="approval-sweeper")
+                    async def maintenance_loop():   # expire approvals, fire due schedules, re-dispatch lost tasks
+                        while True:
+                            await asyncio.sleep(settings.schedule_tick_seconds)
+                            await run_maintenance(app.state.session_factory, runner, llm)
+
+                    sweeper = asyncio.create_task(maintenance_loop(), name="maintenance")
             yield
         finally:
             if sweeper is not None:
@@ -93,6 +98,8 @@ def create_app(init_db: bool = True, init_tools: bool = True) -> FastAPI:
     app.include_router(tools.router, prefix="/api/v1")
     app.include_router(execution.router, prefix="/api/v1")
     app.include_router(approvals.router, prefix="/api/v1")
+    app.include_router(workflows.router, prefix="/api/v1")
+    app.include_router(schedules.router, prefix="/api/v1")
     return app
 
 

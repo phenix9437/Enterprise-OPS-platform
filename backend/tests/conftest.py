@@ -1,9 +1,4 @@
 import os
-import sys
-import asyncio
-
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 os.environ["BCRYPT_ROUNDS"] = "4"  # must be set before the app is imported
 os.environ["OPENAI_API_KEY"] = ""

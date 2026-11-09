@@ -57,3 +57,15 @@ def require_roles(*allowed: Role):
         return user
 
     return checker
+
+
+def lenient_llm(request: Request):
+    """The LLM client if one is configured, else a stand-in that raises LLMError when used.
+    Lets code-built workflows (no LLM steps) run without an OpenAI key. Honours test overrides."""
+    from app.llm.client import UnavailableLLM, get_llm_client
+
+    factory = request.app.dependency_overrides.get(get_llm_client, get_llm_client)
+    try:
+        return factory()
+    except HTTPException:
+        return UnavailableLLM()

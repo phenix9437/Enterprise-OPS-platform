@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, Uuid
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -44,10 +44,11 @@ class Message(Base):
 
 class Task(Base):
     __tablename__ = "tasks"
+    __table_args__ = (UniqueConstraint("schedule_id", "scheduled_for", name="uq_task_schedule_slot"),)
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id"), index=True)
-    conversation_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("conversations.id"), index=True)
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("conversations.id"), nullable=True, index=True)
     instruction: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(30), default=TaskStatus.PLANNING.value, index=True)
     intent: Mapped[str | None] = mapped_column(String(40), nullable=True)
@@ -63,6 +64,14 @@ class Task(Base):
     current_step: Mapped[int | None] = mapped_column(Integer, nullable=True)
     result: Mapped[str | None] = mapped_column(Text, nullable=True)           # final summary for the user
     pending_approval: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # --- workflows & scheduling (Phase 6) ---
+    workflow: Mapped[str | None] = mapped_column(String(60), nullable=True, index=True)
+    schedule_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("schedules.id"), nullable=True, index=True)
+    scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # --- reliable execution: outbox + lease ---
+    pending_dispatch: Mapped[dict | None] = mapped_column(JSON, nullable=True)   # what a worker must do next ({"resume": ...})
+    lock_owner: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    lock_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)

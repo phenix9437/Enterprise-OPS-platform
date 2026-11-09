@@ -217,7 +217,11 @@ def main() -> None:
     from app.core.config import get_settings
 
     settings = get_settings()
-    engine = create_async_engine(settings.business_database_url or settings.database_url)
+    if not settings.business_database_url:
+        raise RuntimeError(
+            "BUSINESS_DATABASE_URL must be configured for the business database MCP server"
+        )
+    engine = create_async_engine(settings.business_database_url)
     maker = async_sessionmaker(engine, expire_on_commit=False)
 
     async def prepare() -> None:

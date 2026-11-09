@@ -22,7 +22,7 @@ class TaskRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    conversation_id: uuid.UUID
+    conversation_id: uuid.UUID | None
     instruction: str
     status: str
     intent: str | None
@@ -33,6 +33,8 @@ class TaskRead(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     llm_latency_ms: float
+    workflow: str | None
+    schedule_id: uuid.UUID | None
     current_step: int | None
     result: str | None
     pending_approval: dict | None

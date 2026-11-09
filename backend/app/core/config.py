@@ -1,3 +1,4 @@
+﻿
 """Central configuration. All values come from environment variables / .env."""
 from functools import lru_cache
 
@@ -47,20 +48,49 @@ class Settings(BaseSettings):
     # --- Approvals (Phase 5) ---
     approval_default_expiry_minutes: int = 1440   # unanswered requests expire after this long
     approval_allow_self_approval: bool = False    # True only for solo development (one person = requester AND approver)
-    approval_sweep_seconds: int = 60              # how often to look for expired requests
+
+    # --- Workflows, scheduling, Celery (Phase 6) ---
+    celery_enabled: bool = False           # True: tasks run in Celery workers instead of inside the API process
+    redis_url: str = "redis://localhost:6379/0"
+    worker_lease_seconds: int = 90         # a worker must renew its claim on a task within this time
+    worker_stale_grace_seconds: int = 120  # how long a 'running' task may sit unclaimed before it is re-dispatched
+    schedule_tick_seconds: int = 30        # how often beat checks for due schedules
+    schedule_min_interval_minutes: int = 5 # refuse schedules that would fire more often than this
+    workflow_max_calls_per_step: int = 100 # fan-out cap for code-built steps
 
     # business data served by the business_db MCP server (defaults to the app DB for the demo)
     business_database_url: str = ""
-    seed_demo_data: bool = True
+    seed_demo_data: bool = False
     gmail_backend: str = "mock"            # mock | google
     drive_backend: str = "mock"            # mock | google
     google_credentials_file: str = ""      # authorized-user JSON for the google backends
     gmail_allowed_recipient_domains: str = ""  # comma-separated; empty = any domain
 
     @model_validator(mode="after")
-    def _block_insecure_secret_in_prod(self) -> "Settings":
-        if self.environment == "production" and self.jwt_secret == _INSECURE_DEFAULT_SECRET:
-            raise ValueError("JWT_SECRET must be set to a strong value in production")
+    def _validate_jwt_secret(self) -> "Settings":
+        if "jwt_secret" not in self.model_fields_set:
+            if self.environment == "production":
+                raise ValueError("JWT_SECRET must be explicitly configured in production")
+            return self
+
+        secret = self.jwt_secret.strip()
+        forbidden = {
+            _INSECURE_DEFAULT_SECRET.casefold(),
+            "change-me",
+            "changeme",
+            "your-secret",
+            "your-secret-key",
+            "replace-me",
+            "password",
+            "secret",
+        }
+
+        if len(secret.encode("utf-8")) < 32:
+            raise ValueError("JWT_SECRET must contain at least 32 bytes")
+
+        if secret.casefold() in forbidden:
+            raise ValueError("JWT_SECRET must not be a default or placeholder value")
+
         return self
 
 

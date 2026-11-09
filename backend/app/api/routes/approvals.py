@@ -5,10 +5,10 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.agents.runner import TaskRunner
-from app.api.deps import DB, CurrentUser, client_ip, require_roles
+from app.api.deps import DB, CurrentUser, client_ip, lenient_llm, require_roles
 from app.api.routes.execution import PRIVILEGED, get_runner
 from app.api.routes.tools import get_gateway
-from app.llm.client import LLMClient, get_llm_client
+from app.llm.client import LLMClient
 from app.models.approval import Approval, ApprovalPolicy
 from app.models.chat import Task, TaskStatus
 from app.models.user import Role, User, utcnow
@@ -62,7 +62,7 @@ async def get_approval(approval_id: uuid.UUID, user: CurrentUser, db: DB):
 @router.post("/approvals/{approval_id}/decision", response_model=ApprovalRead)
 async def decide(approval_id: uuid.UUID, body: DecisionRequest, request: Request, db: DB,
                  user: User = Reviewers, runner: TaskRunner = Depends(get_runner),
-                 gw: ToolGateway = Depends(get_gateway), llm: LLMClient = Depends(get_llm_client)):
+                 gw: ToolGateway = Depends(get_gateway), llm: LLMClient = Depends(lenient_llm)):
     """Approve (optionally editing or removing calls) or reject. Exactly one decision can ever win."""
     a = await db.get(Approval, approval_id)
     if a is None:
@@ -95,8 +95,12 @@ async def decide(approval_id: uuid.UUID, body: DecisionRequest, request: Request
         status="approved" if approve else "rejected", decided_by=user.id, decided_at=utcnow(),
         decision_comment=body.comment, final_calls=final if approve else None,
         modified=modified, modifications=mods or None))
+    resume_payload = {
+        "approved": approve, "approver_id": str(user.id), "comment": body.comment, "approval_id": str(a.id),
+        "calls": final if modified else None, "note": describe_changes(mods) if modified else None}
     resumed = await db.execute(update(Task).where(Task.id == a.task_id, Task.status == TaskStatus.AWAITING_APPROVAL.value)
-                               .values(status=TaskStatus.RUNNING.value, pending_approval=None))
+                               .values(status=TaskStatus.RUNNING.value, pending_approval=None,
+                                       pending_dispatch={"resume": resume_payload}))   # outbox: survives a lost message
     if claim.rowcount != 1 or resumed.rowcount != 1:      # somebody else decided first
         await db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "This request was just decided by someone else")
@@ -108,9 +112,7 @@ async def decide(approval_id: uuid.UUID, body: DecisionRequest, request: Request
     await db.commit()
     await db.refresh(a)
 
-    runner.start(a.task_id, llm, resume={
-        "approved": approve, "approver_id": str(user.id), "comment": body.comment, "approval_id": str(a.id),
-        "calls": final if modified else None, "note": describe_changes(mods) if modified else None})
+    runner.start(a.task_id, llm)
     return _read(a, user, task.instruction)
 
 

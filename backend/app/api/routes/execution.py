@@ -1,15 +1,15 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select, update
+from sqlalchemy import select
 
 from app.agents.runner import TaskRunner
-from app.api.deps import DB, CurrentUser, client_ip, require_roles
-from app.llm.client import LLMClient, get_llm_client
+from app.api.deps import DB, CurrentUser, client_ip, lenient_llm, require_roles
+from app.llm.client import LLMClient
 from app.models.chat import Task, TaskEvent, TaskStatus
-from app.models.user import Role, User, utcnow
+from app.models.user import Role, User
 from app.schemas.chat import ExecutionAccepted, TaskEventRead
-from app.services.audit import record_audit
+from app.services.task_start import claim_planned_task
 
 router = APIRouter(tags=["execution"])
 CanRun = Depends(require_roles(Role.ADMIN, Role.MANAGER, Role.OPERATOR))
@@ -34,20 +34,14 @@ async def _task_for(db, task_id: uuid.UUID, user: User, owner_only: bool) -> Tas
 
 @router.post("/tasks/{task_id}/execute", response_model=ExecutionAccepted, status_code=status.HTTP_202_ACCEPTED)
 async def execute_task(task_id: uuid.UUID, request: Request, db: DB, user: User = CanRun,
-                       runner: TaskRunner = Depends(get_runner), llm: LLMClient = Depends(get_llm_client)):
+                       runner: TaskRunner = Depends(get_runner), llm: LLMClient = Depends(lenient_llm)):
     """Start running a planned task in the background. Poll GET /tasks/{id} and /tasks/{id}/events."""
     task = await _task_for(db, task_id, user, owner_only=True)
     if task.status != TaskStatus.PLANNED.value or not (task.plan or {}).get("steps"):
         raise HTTPException(status.HTTP_409_CONFLICT, f"Only a planned task with steps can be executed (status: {task.status})")
 
-    # atomic claim: if two requests race, exactly one wins
-    res = await db.execute(update(Task).where(Task.id == task_id, Task.status == TaskStatus.PLANNED.value).values(
-        status=TaskStatus.RUNNING.value, started_at=utcnow(), finished_at=None, error=None, result=None))
-    if res.rowcount != 1:
+    if not await claim_planned_task(db, task_id, actor_id=user.id, ip=client_ip(request)):
         raise HTTPException(status.HTTP_409_CONFLICT, "This task is already being executed")
-    record_audit(db, action="task.execute", actor_id=user.id, resource_type="task",
-                 resource_id=str(task_id), ip_address=client_ip(request))
-    await db.commit()
     runner.start(task_id, llm)
     return ExecutionAccepted(task_id=task_id, status=TaskStatus.RUNNING.value)
 

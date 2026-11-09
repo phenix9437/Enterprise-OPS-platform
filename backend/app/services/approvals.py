@@ -85,7 +85,8 @@ async def build_final_calls(db, gateway: ToolGateway, approval: Approval, user: 
             raise ApprovalError(422, f"Call {i + 1} ({call['tool']}): invalid arguments: {exc.message}") from exc
         except GatewayError as exc:
             raise ApprovalError(422, str(exc)) from exc
-        final.append({"tool": call["tool"], "arguments": args, "risk": spec.risk.value, "action": spec.action.value})
+        final.append({"tool": call["tool"], "arguments": args, "risk": spec.risk.value, "action": spec.action.value,
+                      "meta": call.get("meta")})
         if i in by_index and args != call["arguments"]:
             mods.append({"index": i, "tool": call["tool"], "from": call["arguments"], "to": args})
     if not final:
